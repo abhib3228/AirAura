@@ -37,8 +37,9 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // Live AQI for a showcase city (New Delhi)
+  // Live AQI for a showcase city (New Delhi); falls back to a direct browser request
   api("/api/air?lat=28.61&lon=77.21")
+    .catch(() => fallbackAir(28.61, 77.21))
     .then((d) => {
       if (d.us_aqi == null) throw new Error("no aqi");
       const info = aqiInfo(d.us_aqi);

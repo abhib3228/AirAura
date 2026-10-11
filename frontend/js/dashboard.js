@@ -260,11 +260,15 @@ const WX = (c) => {
     hideNotice();
     try {
       const q = `?lat=${city.lat}&lon=${city.lon}`;
-      const [air, grid] = await Promise.all([api("/api/air" + q), api("/api/grid" + q)]);
+      // Try the backend first; if it can't reach Open-Meteo, the browser asks Open-Meteo directly
+      const [air, grid] = await Promise.all([
+        api("/api/air" + q).catch(() => fallbackAir(city.lat, city.lon)),
+        api("/api/grid" + q).catch(() => fallbackGrid(city.lat, city.lon)),
+      ]);
       if (id !== reqId) return; // a newer search finished first
       renderAir(air); renderCompare(air); renderMap(air, grid.points);
     } catch (e) {
-      if (id === reqId) showNotice(e.message);
+      if (id === reqId) showNotice(e.message || "Live data is temporarily unavailable. Please try again shortly.");
     } finally {
       if (id === reqId) { $("#dash").classList.remove("loading"); updateSaveBtn(); }
     }

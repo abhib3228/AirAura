@@ -72,3 +72,55 @@ async function api(path, { method = "GET", body } = {}) {
   }
   return data;
 }
+// ---- Browser-side fallback (used when the backend can't reach Open-Meteo) ----
+const OM_AQ = "https://air-quality-api.open-meteo.com/v1/air-quality";
+const OM_WX = "https://api.open-meteo.com/v1/forecast";
+
+async function omGet(url, params) {
+  const res = await fetch(url + "?" + new URLSearchParams(params));
+  if (!res.ok) throw new Error("Open-Meteo " + res.status);
+  return res.json();
+}
+
+async function fallbackAir(lat, lon) {
+  lat = +lat.toFixed(2); lon = +lon.toFixed(2);
+  const [aqR, wxR] = await Promise.all([
+    omGet(OM_AQ, { latitude: lat, longitude: lon, timezone: "auto",
+      current: "us_aqi,pm2_5,pm10,nitrogen_dioxide,ozone,sulphur_dioxide,carbon_monoxide,uv_index" }),
+    omGet(OM_WX, { latitude: lat, longitude: lon, timezone: "auto",
+      current: "temperature_2m,relative_humidity_2m,apparent_temperature,wind_speed_10m,weather_code,is_day" }),
+  ]);
+  const aq = aqR.current, wx = wxR.current;
+  const pollutants = {
+    "PM2.5": aq.pm2_5, "PM10": aq.pm10, "NO2": aq.nitrogen_dioxide,
+    "SO2": aq.sulphur_dioxide, "CO": aq.carbon_monoxide, "O3": aq.ozone,
+  };
+  let ml = null;
+  if (Object.values(pollutants).every((v) => v != null)) {
+    try { ml = await api("/predict", { method: "POST", body: pollutants }); } catch {}
+  }
+  return {
+    lat, lon, time: aq.time, us_aqi: aq.us_aqi, uv_index: aq.uv_index, pollutants,
+    weather: { temp: wx.temperature_2m, feels_like: wx.apparent_temperature, humidity: wx.relative_humidity_2m,
+               wind: wx.wind_speed_10m, code: wx.weather_code, is_day: wx.is_day },
+    ml,
+  };
+}
+
+async function fallbackGrid(lat, lon) {
+  lat = +lat.toFixed(2); lon = +lon.toFixed(2);
+  const step = 0.25, pts = [];
+  for (const i of [-1, 0, 1]) for (const j of [-1, 0, 1]) pts.push([+(lat + i * step).toFixed(3), +(lon + j * step).toFixed(3)]);
+  const data = await omGet(OM_AQ, {
+    latitude: pts.map((p) => p[0]).join(","), longitude: pts.map((p) => p[1]).join(","), timezone: "auto",
+    current: "us_aqi,pm2_5,pm10,nitrogen_dioxide,ozone,sulphur_dioxide,carbon_monoxide",
+  });
+  const items = Array.isArray(data) ? data : [data];
+  return {
+    points: pts.map(([plat, plon], k) => {
+      const c = (items[k] && items[k].current) || {};
+      return { lat: plat, lon: plon, us_aqi: c.us_aqi,
+        pollutants: { "PM2.5": c.pm2_5, "PM10": c.pm10, "NO2": c.nitrogen_dioxide, "O3": c.ozone, "SO2": c.sulphur_dioxide, "CO": c.carbon_monoxide } };
+    }),
+  };
+}
