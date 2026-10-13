@@ -12,13 +12,12 @@
   <script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <script defer src="js/config.js"></script>
   <script defer src="js/api.js"></script>
-  <script defer src="js/scene.js"></script>
   <script defer src="js/fx.js"></script>
+  <script defer src="js/globe.js"></script>
+  <script defer src="js/alerts.js"></script>
   <script defer src="js/dashboard.js"></script>
 </head>
 <body>
-  <canvas id="smog" aria-hidden="true"></canvas>
-
   <nav class="nav glass">
     <a class="logo" href="index.html">Air<span>Aura</span></a>
     <div class="nav-actions"><span class="muted" id="userName"></span><button class="btn ghost" id="logout">Log out</button></div>
@@ -34,9 +33,28 @@
       <button class="btn ghost" id="saveFav" type="button">☆ Save city</button>
     </section>
     <div id="favs" class="chips"></div>
+
+    <div id="alertBanner" class="notice" role="alert" hidden>
+      <span id="alertBannerText"></span>
+      <button id="alertClose" class="btn ghost" type="button" aria-label="Dismiss alert">×</button>
+    </div>
     <div id="status" class="notice" hidden></div>
 
     <div id="dash" class="grid loading">
+      <article class="card glass earth-card">
+        <h2>Global view <small class="muted">drag to rotate · scroll or pinch to zoom · click a marker or the globe to select</small></h2>
+        <div id="earthBox" class="earth">
+          <div id="earthCanvas" class="earth-canvas" role="img" aria-label="Interactive 3D Earth. Drag to rotate, pinch or use the buttons to zoom."></div>
+          <div class="earth-ui">
+            <button class="btn ghost" data-z="-1" type="button" aria-label="Zoom in">＋</button>
+            <button class="btn ghost" data-z="1" type="button" aria-label="Zoom out">－</button>
+          </div>
+          <p class="earth-msg">Loading Earth…</p>
+          <p class="earth-fallback">3D globe unavailable on this device. Use search or the map below.</p>
+        </div>
+        <p class="note">Marker colours are Open-Meteo model estimates (not ground stations) for a fixed list of major cities. Pulsing rings mark AQI above 100.</p>
+      </article>
+
       <article class="card glass aqi-card">
         <h2 id="cityName" class="city sk">City</h2>
         <div class="gauge">
@@ -47,7 +65,9 @@
           <div class="gauge-num"><span id="aqiVal" class="sk">--</span><small>US AQI</small></div>
         </div>
         <span id="aqiCat" class="pill sk">Loading</span>
+        <span id="srcBadge" class="badge"></span>
         <p id="aqiAdvice" class="sk">Loading summary</p>
+        <p class="note" id="srcNote"></p>
         <p class="note" id="updated"></p>
       </article>
 
@@ -78,6 +98,21 @@
         <p class="diff sk" id="diff">–</p>
         <div class="chart-box"><canvas id="chart"></canvas></div>
         <p class="note" id="mlNote"></p>
+      </article>
+
+      <article class="card glass alerts">
+        <h2>Pollution alerts</h2>
+        <div class="alert-bar">
+          <label for="alertLevel" class="muted">Alert at</label>
+          <select id="alertLevel">
+            <option value="101">Unhealthy for Sensitive Groups (101+)</option>
+            <option value="151">Unhealthy (151+)</option>
+            <option value="201">Very Unhealthy (201+)</option>
+          </select>
+          <button class="btn ghost" id="refresh" type="button">↻ Refresh city</button>
+        </div>
+        <ul id="alertList" class="alert-list"></ul>
+        <p class="note">Modeled values, cached up to 10 minutes. Not real-time and not street-level.</p>
       </article>
 
       <article class="card glass map-card"><h2>Pollution map</h2><div id="map"></div></article>

@@ -85,12 +85,12 @@ async function initSmog(canvas, opts = {}) {
     globeMat.color.copy(mat.color);
     atmoColor.value.copy(mat.color);
     points.rotation.y += 0.0015 * speed;
-    points.rotation.x = Math.sin(t * 0.2) * 0.1;        // slow swirl
+    points.rotation.x = Math.sin(t * 0.2) * 0.1;
     globe.rotation.y += 0.002;
     rings[0].rotation.z += 0.003; rings[1].rotation.z -= 0.002;
-    atmo.scale.setScalar(1 + Math.sin(t * 1.4) * 0.015 * speed); // breathing glow
+    atmo.scale.setScalar(1 + Math.sin(t * 1.4) * 0.015 * speed);
     nodes.forEach((n, i) => n.scale.setScalar(1 + 0.6 * Math.abs(Math.sin(t * 2 + i))));
-    group.rotation.x += (my * 0.2 - group.rotation.x) * 0.04;   // pointer parallax
+    group.rotation.x += (my * 0.2 - group.rotation.x) * 0.04;
     camera.position.x += (mx * 0.6 - camera.position.x) * 0.04;
     renderer.render(scene, camera);
     raf = requestAnimationFrame(frame);
@@ -112,7 +112,7 @@ async function initSmog(canvas, opts = {}) {
       geo.setDrawRange(0, Math.floor(MAX * density));
       mat.opacity = (dash ? 0.35 : 0.55) + 0.35 * density;
       speed = 0.6 + density * 2.5;
-      if (window.gsap && !prefersReduced)   // little "pulse" whenever the data changes
+      if (window.gsap && !prefersReduced)
         gsap.fromTo(group.scale, { x: 1.07, y: 1.07, z: 1.07 }, { x: 1, y: 1, z: 1, duration: 1.3, ease: "elastic.out(1, 0.45)" });
       if (!running) { mat.color.copy(target); renderer.render(scene, camera); }
     },

@@ -1,7 +1,7 @@
 """
 Train an AQI regressor on Kaggle's "Air Quality Data in India (2015-2020)".
 Usage:  python train_model.py
-Output: model.pkl  (dict with the model, feature order, and metrics)
+Output: model.pkl  (model, feature order, metrics, and per-city monthly typical pollutants for the fallback estimate)
 """
 import pathlib
 import sys
@@ -18,6 +18,17 @@ DATA_PATH = BASE / "data" / "city_day.csv"
 MODEL_PATH = BASE / "model.pkl"
 FEATURES = ["PM2.5", "PM10", "NO2", "SO2", "CO", "O3"]  # order matters; app.py uses the same
 TARGET = "AQI"
+
+# Approximate city-centre coordinates for the dataset's cities (used only to find the nearest city for the fallback)
+CITY_COORDS = {
+    "Ahmedabad": (23.02, 72.57), "Aizawl": (23.73, 92.72), "Amaravati": (16.51, 80.52), "Amritsar": (31.63, 74.87),
+    "Bengaluru": (12.97, 77.59), "Bhopal": (23.26, 77.41), "Brajrajnagar": (21.82, 83.92), "Chandigarh": (30.73, 76.78),
+    "Chennai": (13.08, 80.27), "Coimbatore": (11.02, 76.96), "Delhi": (28.61, 77.21), "Ernakulam": (9.98, 76.28),
+    "Gurugram": (28.46, 77.03), "Guwahati": (26.14, 91.74), "Hyderabad": (17.39, 78.49), "Jaipur": (26.91, 75.79),
+    "Jorapokhar": (23.71, 86.41), "Kochi": (9.93, 76.27), "Kolkata": (22.57, 88.36), "Lucknow": (26.85, 80.95),
+    "Mumbai": (19.08, 72.88), "Patna": (25.59, 85.14), "Shillong": (25.57, 91.88), "Talcher": (20.95, 85.22),
+    "Thiruvananthapuram": (8.52, 76.94), "Visakhapatnam": (17.69, 83.22),
+}
 
 
 def load_and_clean() -> pd.DataFrame:
@@ -42,6 +53,29 @@ def load_and_clean() -> pd.DataFrame:
 
     print(f"After cleaning: {len(df):,} rows")
     return df
+
+
+def build_climatology(df: pd.DataFrame) -> dict:
+    """Typical pollutant levels per city and calendar month, for the 'no live data' fallback."""
+    df = df.copy()
+    df["month"] = pd.to_datetime(df["Date"], errors="coerce").dt.month
+
+    def pack(row):  # dataset CO is mg/m3; the app works in ug/m3
+        d = {k: float(v) for k, v in row.items()}
+        d["CO"] *= 1000
+        return d
+
+    clim = {}
+    for city, g in df.groupby("City"):
+        if city not in CITY_COORDS:
+            continue
+        clim[city] = {
+            "lat": CITY_COORDS[city][0], "lon": CITY_COORDS[city][1],
+            "all": pack(g[FEATURES].median()),
+            "months": {int(m): pack(r) for m, r in g.groupby("month")[FEATURES].median().iterrows()},
+        }
+    print(f"Climatology built for {len(clim)} cities")
+    return clim
 
 
 def main():
@@ -74,6 +108,7 @@ def main():
             "model": best_model,
             "features": FEATURES,
             "metrics": {"name": best_name, "mae": round(float(best_mae), 2), "r2": round(float(best_r2), 4)},
+            "climatology": build_climatology(df),
         },
         MODEL_PATH,
         compress=3,

@@ -37,7 +37,7 @@ function countTo(el, value, decimals = 0) {
   gsap.to(obj, { n: value, duration: 1.1, ease: "power2.out", onUpdate: () => (el.textContent = obj.n.toFixed(decimals)) });
 }
 
-// Lazy-load a script once (used for Three.js so it never blocks first paint)
+// Lazy-load a script once (keeps heavy 3D libraries off the critical path)
 const _loaded = {};
 function loadScript(src) {
   if (!_loaded[src]) {
@@ -57,10 +57,15 @@ async function api(path, { method = "GET", body } = {}) {
   if (token) headers.Authorization = "Bearer " + token;
 
   let res;
+  // If the server takes more than 4 seconds it is probably waking up (free Render instances sleep)
+  const slow = setTimeout(() => window.dispatchEvent(new Event("airaura:slow")), 4000);
   try {
     res = await fetch(API + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   } catch {
     throw { message: "Can't reach the server. On Render's free tier it may be waking up, so please try again in about 30 seconds." };
+  } finally {
+    clearTimeout(slow);
+    window.dispatchEvent(new Event("airaura:ready"));
   }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -72,6 +77,7 @@ async function api(path, { method = "GET", body } = {}) {
   }
   return data;
 }
+
 // ---- Browser-side fallback (used when the backend can't reach Open-Meteo) ----
 const OM_AQ = "https://air-quality-api.open-meteo.com/v1/air-quality";
 const OM_WX = "https://api.open-meteo.com/v1/forecast";
@@ -88,7 +94,7 @@ async function fallbackAir(lat, lon) {
     omGet(OM_AQ, { latitude: lat, longitude: lon, timezone: "auto",
       current: "us_aqi,pm2_5,pm10,nitrogen_dioxide,ozone,sulphur_dioxide,carbon_monoxide,uv_index" }),
     omGet(OM_WX, { latitude: lat, longitude: lon, timezone: "auto",
-      current: "temperature_2m,relative_humidity_2m,apparent_temperature,wind_speed_10m,weather_code,is_day" }),
+      current: "temperature_2m,relative_humidity_2m,apparent_temperature,wind_speed_10m,weather_code,is_day" }).catch(() => ({ current: {} })),
   ]);
   const aq = aqR.current, wx = wxR.current;
   const pollutants = {
@@ -100,7 +106,7 @@ async function fallbackAir(lat, lon) {
     try { ml = await api("/predict", { method: "POST", body: pollutants }); } catch {}
   }
   return {
-    lat, lon, time: aq.time, us_aqi: aq.us_aqi, uv_index: aq.uv_index, pollutants,
+    lat, lon, time: aq.time, us_aqi: aq.us_aqi, uv_index: aq.uv_index, pollutants, source: "live",
     weather: { temp: wx.temperature_2m, feels_like: wx.apparent_temperature, humidity: wx.relative_humidity_2m,
                wind: wx.wind_speed_10m, code: wx.weather_code, is_day: wx.is_day },
     ml,

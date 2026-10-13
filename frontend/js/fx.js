@@ -3,6 +3,7 @@ const FX = {
   tilt() {
     if (prefersReduced || !window.gsap || !matchMedia("(hover: hover)").matches) return;
     document.querySelectorAll(".card").forEach((card) => {
+      if (card.classList.contains("earth-card") || card.classList.contains("map-card")) return; // don't fight dragging
       const rx = gsap.quickTo(card, "rotationX", { duration: 0.5, ease: "power3.out" });
       const ry = gsap.quickTo(card, "rotationY", { duration: 0.5, ease: "power3.out" });
       gsap.set(card, { transformPerspective: 900 });

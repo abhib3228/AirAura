@@ -25,7 +25,7 @@ document.addEventListener("DOMContentLoaded", () => {
         smog = await initSmog($("#smog"));
         smog.setAQI(current);
 
-        // Scroll-driven globe: spins one full turn and the camera pulls back as you scroll
+        // Scroll-driven globe: one full turn, camera pulls back as you scroll
         if (window.gsap && window.ScrollTrigger && !prefersReduced) {
           const st = { trigger: document.body, start: "top top", end: "bottom bottom", scrub: 1 };
           gsap.to(smog.group.rotation, { y: Math.PI * 2, ease: "none", scrollTrigger: st });
@@ -44,7 +44,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (d.us_aqi == null) throw new Error("no aqi");
       const info = aqiInfo(d.us_aqi);
       countTo($("#heroAqi"), d.us_aqi);
-      $("#heroCat").textContent = info.name;
+      $("#heroCat").textContent = info.name + (d.source === "ml_estimate" ? " (estimate)" : "");
       $("#heroDot").style.color = $("#heroDot").style.background = info.color;
       $("#preview").value = Math.min(d.us_aqi, 300);
       $("#previewVal").textContent = "AQI " + d.us_aqi;

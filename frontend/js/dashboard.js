@@ -41,8 +41,10 @@ const ADVICE = [
 const POLLUTANTS = ["PM2.5", "PM10", "NO2", "O3", "SO2", "CO"];
 const CITY_KEY = "airaura_city";
 const DEFAULT_CITY = { name: "Delhi", country: "India", lat: 28.6139, lon: 77.209 };
+const FRIENDLY_ERROR = "Live data is temporarily unavailable. Please try again shortly.";
 
 const WX = (c) => {
+  if (c == null) return "–";
   if (c === 0) return "☀️ Clear";
   if (c <= 3) return "⛅ Partly cloudy";
   if (c === 45 || c === 48) return "🌫️ Fog";
@@ -53,6 +55,23 @@ const WX = (c) => {
   return "☁️ Cloudy";
 };
 
+// Coordinates only; every AQI value on the globe comes from the API (mirrors WATCH in app.py)
+const WATCH = [["Delhi", 28.61, 77.21], ["Beijing", 39.90, 116.40], ["London", 51.51, -0.13], ["New York", 40.71, -74.01],
+  ["Cairo", 30.04, 31.24], ["São Paulo", -23.55, -46.63], ["Sydney", -33.87, 151.21], ["Tokyo", 35.68, 139.69],
+  ["Lagos", 6.52, 3.38], ["Mexico City", 19.43, -99.13]];
+
+async function fallbackGlobe() {  // browser-side version, used if the backend can't reach Open-Meteo
+  const d = await omGet(OM_AQ, {
+    latitude: WATCH.map((w) => w[1]).join(","), longitude: WATCH.map((w) => w[2]).join(","),
+    current: "us_aqi,pm2_5", timezone: "auto",
+  });
+  const items = Array.isArray(d) ? d : [d];
+  return { points: WATCH.map(([name, lat, lon], i) => {
+    const c = (items[i] && items[i].current) || {};
+    return { name, lat, lon, us_aqi: c.us_aqi, pm2_5: c.pm2_5, time: c.time };
+  }) };
+}
+
 (async function () {
   // ---- Auth gate -----------------------------------------------------------
   if (!localStorage.getItem(TOKEN_KEY)) return location.replace("login.html");
@@ -62,7 +81,7 @@ const WX = (c) => {
 
   const state = { city: null, band: 0, tab: "general", favs: [] };
   let reqId = 0, map, mapLayer, chart;
-  let smog = null, lastAqi = 0;
+  let earth = null, watch = [], lastAir = null, lastGrid = [];
 
   // ---- Entrance animations -------------------------------------------------
   if (window.gsap && window.ScrollTrigger && !prefersReduced) {
@@ -79,6 +98,10 @@ const WX = (c) => {
   const showNotice = (m) => { const n = $("#status"); n.textContent = m; n.hidden = false; };
   const hideNotice = () => ($("#status").hidden = true);
   const same = (a, b) => Math.abs(a.lat - b.lat) < 0.01 && Math.abs(a.lon - b.lon) < 0.01;
+
+  // Free Render instances sleep; tell the user why the first load is slow
+  window.addEventListener("airaura:slow", () => showNotice("Waking up the server… free instances sleep after inactivity, so the first load can take up to a minute."));
+  window.addEventListener("airaura:ready", hideNotice);
 
   // ---- Search (debounced) --------------------------------------------------
   const results = $("#results");
@@ -100,7 +123,7 @@ const WX = (c) => {
   const doSearch = debounce(async (q) => {
     if (q.length < 2) return hideResults();
     try { showResults((await api("/api/geocode?q=" + encodeURIComponent(q))).results); }
-    catch (e) { showNotice(e.message); }
+    catch (e) { showNotice(e.message || FRIENDLY_ERROR); }
   }, 350);
   $("#q").addEventListener("input", (e) => doSearch(e.target.value.trim()));
   document.addEventListener("click", (e) => { if (!e.target.closest(".search")) hideResults(); });
@@ -161,6 +184,22 @@ const WX = (c) => {
     FX.tab();
   }));
 
+  // Badge: green Live, yellow Cached, orange ML estimate
+  function renderSource(air) {
+    const s = air.source || "live";
+    const m = {
+      live: ["#22c55e", "Live"],
+      cached: ["#eab308", `Cached (${Math.max(1, Math.round((air.age_s || 0) / 60))} min ago)`],
+      ml_estimate: ["#f97316", "ML estimate"],
+    }[s] || ["#94a3b8", s];
+    $("#srcBadge").style.setProperty("--c", m[0]);
+    $("#srcBadge").textContent = m[1];
+    $("#srcNote").textContent =
+      s === "ml_estimate" ? "A prediction from typical past levels near this place, not a measurement."
+      : s === "cached" ? "Live data is unreachable, so this is the last successful reading."
+      : "Modeled by Open-Meteo (CAMS), not a ground station.";
+  }
+
   function renderAir(air) {
     const aqi = air.us_aqi, info = aqiInfo(aqi);
     state.band = info.index;
@@ -177,24 +216,26 @@ const WX = (c) => {
     pill.textContent = aqi == null ? "No data" : info.name;
     pill.style.background = info.color + "33"; pill.style.color = info.color; pill.style.borderColor = info.color + "88";
     $("#aqiAdvice").textContent = ADVICE[info.index].summary;
-    $("#updated").textContent = air.time ? "Updated " + air.time.replace("T", " ") + " (local time)" : "";
+    $("#updated").textContent = air.time ? "Reading time " + air.time.replace("T", " ") + " (local time)" : "";
 
-    const w = air.weather;
+    const w = air.weather || {};
     const f = (v, d = 0) => (v == null ? "–" : Number(v).toFixed(d));
     $("#weather").innerHTML =
       tile("Temperature", f(w.temp, 1), "°C") + tile("Feels like", f(w.feels_like, 1), "°C") + tile("Humidity", f(w.humidity), "%") +
       tile("Wind", f(w.wind, 1), "km/h") + tile("UV index", f(air.uv_index, 1)) + tile("Conditions", WX(w.code));
-    $("#pollutants").innerHTML = POLLUTANTS.map((p) => tile(p, f(air.pollutants[p], 1))).join("");
+    $("#pollutants").innerHTML = POLLUTANTS.map((p) => tile(p, f((air.pollutants || {})[p], 1))).join("");
     renderAdvice();
-
-    // Visual effects + 3D background react to the new AQI
+    renderSource(air);
     FX.onData(info);
-    if (smog) smog.setAQI(aqi || 0);
-    lastAqi = aqi || 0;
   }
 
   function renderCompare(air) {
     const live = air.us_aqi, ml = air.ml;
+    if (air.source === "ml_estimate") {  // no live reading exists, so there is nothing to compare against
+      $("#liveAqi").textContent = "–"; $("#mlAqi").textContent = air.us_aqi ?? "–";
+      $("#diff").textContent = "No live reading to compare."; $("#mlNote").textContent = "";
+      return;
+    }
     countTo($("#liveAqi"), live);
     if (!ml) {
       $("#mlAqi").textContent = "–"; $("#diff").textContent = "ML model unavailable. Run train_model.py and redeploy.";
@@ -238,15 +279,29 @@ const WX = (c) => {
     }
     map.setView([air.lat, air.lon], 9);
     mapLayer.clearLayers();
+    const when = air.time ? air.time.replace("T", " ") : "time n/a";
     points.forEach((p) => {
-      if (p.us_aqi == null) return;
+      if (p.us_aqi == null) {  // missing measurement: grey marker, never an invented value
+        L.circleMarker([p.lat, p.lon], { radius: 8, color: "#94a3b8", weight: 1, fillOpacity: 0.1 }).bindPopup("No data for this point right now.").addTo(mapLayer);
+        return;
+      }
       const info = aqiInfo(p.us_aqi), isCenter = same(p, air);
       L.circle([p.lat, p.lon], { radius: 14000, stroke: false, fillColor: info.color, fillOpacity: 0.2 }).addTo(mapLayer); // soft "heat" halo
       const rows = Object.entries(p.pollutants).map(([k, v]) => `${esc(k)}: ${v == null ? "–" : Number(v).toFixed(1)}`).join("<br>");
       L.circleMarker([p.lat, p.lon], { radius: isCenter ? 16 : 12, color: "#fff", weight: isCenter ? 2 : 1, fillColor: info.color, fillOpacity: 0.8 })
-        .bindPopup(`<b>${isCenter ? esc(cityLabel(state.city)) : "Nearby point"}</b><br>US AQI <b>${p.us_aqi}</b> (${esc(info.name)})<hr style="opacity:.2">${rows}`)
+        .bindPopup(`<b>${isCenter ? esc(cityLabel(state.city)) : "Nearby point"}</b><br>US AQI <b>${p.us_aqi}</b> (${esc(info.name)})<hr style="opacity:.2">${rows}<br><small>Modeled · ${esc(when)} · Open-Meteo/CAMS</small>`)
         .addTo(mapLayer);
     });
+  }
+
+  // ---- Alerts --------------------------------------------------------------
+  function refreshAlerts() {
+    const items = [];
+    if (lastAir && state.city) items.push({ name: cityLabel(state.city), aqi: lastAir.us_aqi, time: lastAir.time });
+    lastGrid.forEach((p) => { if (!state.city || !same(p, state.city)) items.push({ name: `Nearby point ${p.lat}, ${p.lon}`, aqi: p.us_aqi, time: lastAir && lastAir.time }); });
+    watch.forEach((w) => items.push({ name: w.name, aqi: w.us_aqi, time: w.time }));
+    Alerts.render(items);
+    Alerts.banner(state.city ? cityLabel(state.city) : "", lastAir && lastAir.us_aqi);
   }
 
   // ---- Load a city ---------------------------------------------------------
@@ -260,15 +315,20 @@ const WX = (c) => {
     hideNotice();
     try {
       const q = `?lat=${city.lat}&lon=${city.lon}`;
-      // Try the backend first; if it can't reach Open-Meteo, the browser asks Open-Meteo directly
+      // Chain: backend (live -> cached -> ML estimate). If the backend couldn't get live data, try Open-Meteo straight from the browser.
       const [air, grid] = await Promise.all([
-        api("/api/air" + q).catch(() => fallbackAir(city.lat, city.lon)),
-        api("/api/grid" + q).catch(() => fallbackGrid(city.lat, city.lon)),
+        api("/api/air" + q)
+          .then((d) => (d.source !== "live" ? fallbackAir(city.lat, city.lon).catch(() => d) : d))
+          .catch(() => fallbackAir(city.lat, city.lon)),
+        api("/api/grid" + q).catch(() => fallbackGrid(city.lat, city.lon)).catch(() => ({ points: [] })),
       ]);
       if (id !== reqId) return; // a newer search finished first
-      renderAir(air); renderCompare(air); renderMap(air, grid.points);
+      renderAir(air); renderCompare(air); renderMap(air, grid.points || []);
+      lastAir = air; lastGrid = grid.points || [];
+      if (earth) earth.focus(city.lat, city.lon, air.us_aqi);
+      refreshAlerts();
     } catch (e) {
-      if (id === reqId) showNotice(e.message || "Live data is temporarily unavailable. Please try again shortly.");
+      if (id === reqId) showNotice(e && e.message && !/^Open-Meteo/.test(e.message) ? e.message : FRIENDLY_ERROR);
     } finally {
       if (id === reqId) { $("#dash").classList.remove("loading"); updateSaveBtn(); }
     }
@@ -280,12 +340,17 @@ const WX = (c) => {
   try { start = JSON.parse(localStorage.getItem(CITY_KEY)) || DEFAULT_CITY; } catch {}
 
   FX.tilt();
-  const saveData = navigator.connection && navigator.connection.saveData;
-  if (!saveData) {
-    (window.requestIdleCallback || ((f) => setTimeout(f, 400)))(async () => {
-      try { smog = await initSmog($("#smog"), { variant: "dash" }); smog.setAQI(lastAqi); }
-      catch (e) { console.warn("3D background disabled:", e); }
-    });
-  }
+  $("#alertLevel").value = Alerts.level();
+  $("#alertLevel").onchange = (e) => { localStorage.setItem(ALERT_KEY, e.target.value); refreshAlerts(); };
+  $("#refresh").onclick = () => loadAll(state.city);
+
+  initEarth($("#earthBox"), { onSelect: (c) => selectCity(c) }).then((e) => {
+    earth = e;
+    if (!earth) return;  // WebGL unavailable: the fallback message is already showing
+    if (state.city) earth.focus(state.city.lat, state.city.lon, lastAir && lastAir.us_aqi);
+    api("/api/globe").catch(() => fallbackGlobe())
+      .then((d) => { watch = d.points; earth.setMarkers(watch); refreshAlerts(); })
+      .catch(() => {});
+  });
   loadAll(start);
 })();
